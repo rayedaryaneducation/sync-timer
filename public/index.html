@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Synchronized Countdown Timer</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+        .timer-display {
+            font-size: 4em;
+            font-weight: bold;
+            margin: 20px 0;
+            color: #333;
+        }
+        .controls {
+            margin: 20px 0;
+        }
+        input, button {
+            padding: 10px;
+            margin: 5px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 16px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            cursor: pointer;
+            border: none;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        .status {
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        .connected {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .disconnected {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Synchronized Countdown Timer</h1>
+
+        <div id="status" class="status disconnected">Disconnected</div>
+
+        <div class="controls">
+            <input type="text" id="sessionCode" placeholder="Enter session code" maxlength="6" />
+            <button id="joinBtn">Join Session</button>
+        </div>
+
+        <div class="timer-display" id="timerDisplay">00:00.00</div>
+
+        <div class="controls">
+            <input
+                type="number"
+                id="durationInput"
+                placeholder="Duration (seconds)"
+                min="0.01"
+                step="0.01"
+                value="60"
+            />
+            <button id="startBtn" disabled>Start Timer</button>
+            <button id="resetBtn" disabled>Reset</button>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+        let timerInterval = null;
+        let sessionCode = null;
+        let endTime = null;
+
+        const statusEl = document.getElementById('status');
+        const sessionCodeEl = document.getElementById('sessionCode');
+        const joinBtn = document.getElementById('joinBtn');
+        const timerDisplayEl = document.getElementById('timerDisplay');
+        const durationInputEl = document.getElementById('durationInput');
+        const startBtn = document.getElementById('startBtn');
+        const resetBtn = document.getElementById('resetBtn');
+
+        function connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}`;
+
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = () => {
+                updateStatus('Connected - Enter session code');
+            };
+
+            ws.onmessage = (event) => {
+                const msg = JSON.parse(event.data);
+                handleMessage(msg);
+            };
+
+            ws.onclose = () => {
+                updateStatus('Disconnected');
+                startBtn.disabled = true;
+                resetBtn.disabled = true;
+            };
+
+            ws.onerror = () => {
+                updateStatus('Connection error');
+            };
+        }
+
+        function handleMessage(msg) {
+            switch (msg.type) {
+                case 'joined':
+                    sessionCode = msg.code;
+                    updateStatus(`Joined session: ${sessionCode}`);
+                    startBtn.disabled = false;
+                    resetBtn.disabled = false;
+                    break;
+
+                case 'start':
+                    endTime = msg.startTime + msg.duration;
+                    startTimer();
+                    break;
+
+                case 'reset':
+                    resetTimer();
+                    break;
+            }
+        }
+
+        function updateStatus(message) {
+            statusEl.textContent = message;
+            statusEl.className = 'status ' + (message.includes('Disconnected') || message.includes('error') ? 'disconnected' : 'connected');
+        }
+
+        function formatTime(ms) {
+            const totalSeconds = Math.floor(ms / 1000);
+            const mins = Math.floor(totalSeconds / 60);
+            const secs = totalSeconds % 60;
+            const centiseconds = Math.floor((ms % 1000) / 10);
+            return `${mins.toString().padStart(2,'0')}:${secs.toString().padStart(2,'0')}.${centiseconds.toString().padStart(2,'0')}`;
+        }
+
+        function updateDisplay() {
+            if (!endTime) {
+                timerDisplayEl.textContent = '00:00.00';
+                return;
+            }
+
+            const now = Date.now();
+            const remainingMs = Math.max(0, endTime - now);
+            timerDisplayEl.textContent = formatTime(remainingMs);
+
+            if (remainingMs <= 0) {
+                clearInterval(timerInterval);
+                timerInterval = null;
+                timerDisplayEl.style.color = '#dc3545';
+                setTimeout(() => {
+                    timerDisplayEl.style.color = '#333';
+                }, 3000);
+            }
+        }
+
+        function startTimer() {
+            if (timerInterval) clearInterval(timerInterval);
+            timerInterval = setInterval(updateDisplay, 50);
+            updateDisplay();
+        }
+
+        function resetTimer() {
+            if (timerInterval) {
+                clearInterval(timerInterval);
+                timerInterval = null;
+            }
+            endTime = null;
+            timerDisplayEl.textContent = '00:00.00';
+            timerDisplayEl.style.color = '#333';
+        }
+
+        joinBtn.addEventListener('click', () => {
+            const code = sessionCodeEl.value.trim().toUpperCase();
+            if (code && ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'join', code: code }));
+            }
+        });
+
+        startBtn.addEventListener('click', () => {
+            const duration = parseFloat(durationInputEl.value) * 1000;
+            if (duration > 0 && ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'start', duration: duration }));
+            }
+        });
+
+        resetBtn.addEventListener('click', () => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'reset' }));
+            }
+        });
+
+        sessionCodeEl.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                joinBtn.click();
+            }
+        });
+
+        // Initialize WebSocket connection
+        connectWebSocket();
+    </script>
+</body>
+</html>
